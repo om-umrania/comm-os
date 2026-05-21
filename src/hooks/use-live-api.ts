@@ -37,7 +37,7 @@ export function useLiveAPI() {
         throw new Error(error || "No API key returned from setup.");
       }
 
-      const model = 'models/gemini-2.0-flash-exp';
+      const model = 'models/gemini-2.0-flash';
       const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
       
       const ws = new WebSocket(wsUrl);
