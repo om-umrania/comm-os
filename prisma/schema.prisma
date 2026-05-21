@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  
+  scenario      String?
+  pressureLevel Int?     // Scale of 1-5
+  
+  turns         Turn[]
+}
+
+model Turn {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  
+  sessionId     String
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  speaker       String   // "user" or "ai"
+  transcript    String   @db.Text
+  
+  // Feedback scores for user turns
+  blufScore     Boolean?
+  ruleOf3Score  Boolean?
+  critique      String?  @db.Text
+}
+
+// Keeping the old model for backward compatibility / analytics history
+model CommunicationLog {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  scenario        String
+  pressureLevel   Int      
+  blufScore       Boolean  @default(false)
+  ruleOf3Score    Boolean  @default(false)
+  frazzleTrigger  String?  @db.Text
+  idealRewrite    String?  @db.Text 
+}
