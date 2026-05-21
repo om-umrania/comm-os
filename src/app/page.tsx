@@ -1,117 +1,183 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { RefreshCw, BrainCircuit, CheckCircle2, XCircle, Mic, MicOff, RadioReceiver, PhoneOff } from 'lucide-react';
+import {
+  RefreshCw, BrainCircuit, CheckCircle2, XCircle,
+  Mic, RadioReceiver, PhoneOff, BarChart2, X,
+  Save, Loader2,
+} from 'lucide-react';
 import { useLiveAPI } from '@/hooks/use-live-api';
+import type { CommunicationLog } from '@/types';
+
+type SaveStatus = 'idle' | 'saving' | 'success' | 'error';
+
+const SCENARIOS = [
+  'Explaining the RAG pipeline to a non-technical stakeholder',
+  'MBA case study mock debate on market entry',
+  'Updating an executive on a delayed project deliverable',
+  'Pitching a complex architectural change to the product team',
+  'Justifying a budget increase for cloud infrastructure',
+];
 
 export default function CommOSDashboard() {
   const [activeTab, setActiveTab] = useState('preflight');
-  const [logs, setLogs] = useState<any[]>([]);
+  const [logs, setLogs] = useState<CommunicationLog[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(true);
+  const [activeScenario, setActiveScenario] = useState('');
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
 
-  // Pre-Flight State
-  const [randomScenario, setRandomScenario] = useState('');
-  
-  // Live Session State
-  const { connect, disconnect, isConnected, isConnecting, transcript, errorMsg } = useLiveAPI();
+  const { connect, disconnect, isConnected, isConnecting, transcript, errorMsg, clearError } = useLiveAPI();
 
-  const fetchLogs = async () => {
-    const res = await fetch('/api/logs');
-    if (res.ok) {
-      const data = await res.json();
-      setLogs(data);
+  // Initial log fetch — uses .then() to keep setState out of the effect body
+  useEffect(() => {
+    fetch('/api/logs')
+      .then(res => res.ok ? res.json() as Promise<CommunicationLog[]> : Promise.resolve([]))
+      .then(data => {
+        setLogs(data);
+        setIsLoadingLogs(false);
+      })
+      .catch(() => setIsLoadingLogs(false));
+  }, []);
+
+  const refreshLogs = async () => {
+    setIsLoadingLogs(true);
+    try {
+      const res = await fetch('/api/logs');
+      if (res.ok) setLogs(await res.json() as CommunicationLog[]);
+    } finally {
+      setIsLoadingLogs(false);
     }
   };
 
-  useEffect(() => {
-    fetchLogs();
-  }, []);
-
   const generatePreFlightScenario = () => {
-    const scenarios = [
-      "Explaining the RAG pipeline to a non-technical stakeholder",
-      "MBA case study mock debate on market entry",
-      "Updating an executive on a delayed project deliverable",
-      "Pitching a complex architectural change to the product team",
-      "Justifying a budget increase for cloud infrastructure"
-    ];
-    setRandomScenario(scenarios[Math.floor(Math.random() * scenarios.length)]);
+    const next = SCENARIOS[Math.floor(Math.random() * SCENARIOS.length)];
+    setActiveScenario(next);
   };
 
   const handleSaveSession = async () => {
-    // In a real app we'd save the full transcript and scores to the /api/logs endpoint here
-    alert("Session saved to Neon DB!");
-    setActiveTab('analytics');
-    fetchLogs();
+    if (!transcript.trim()) return;
+    setSaveStatus('saving');
+    try {
+      const res = await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario: activeScenario || 'Live Coaching Session',
+          pressureLevel: 3,
+          blufScore: false,
+          ruleOf3Score: false,
+          idealRewrite: transcript,
+        }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      setSaveStatus('success');
+      await refreshLogs();
+      setTimeout(() => {
+        setSaveStatus('idle');
+        setActiveTab('analytics');
+      }, 1200);
+    } catch {
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-[#020817] text-foreground p-6 md:p-12 font-sans relative overflow-hidden">
-      
-      {/* Background Orbs */}
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-900/30 rounded-full blur-[120px] pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-emerald-900/20 rounded-full blur-[120px] pointer-events-none"></div>
-      <div className="absolute top-[40%] right-[10%] w-[30%] h-[30%] bg-purple-900/20 rounded-full blur-[100px] pointer-events-none"></div>
+    <div className="min-h-screen bg-[#020817] text-foreground p-6 md:p-10 font-sans relative overflow-hidden">
+
+      {/* Ambient background orbs */}
+      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-900/25 rounded-full blur-[130px] pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-emerald-900/15 rounded-full blur-[130px] pointer-events-none" />
+      <div className="absolute top-[40%] right-[10%] w-[30%] h-[30%] bg-purple-900/15 rounded-full blur-[110px] pointer-events-none" />
 
       <div className="max-w-4xl mx-auto space-y-8 relative z-10">
-        
-        <div className="space-y-3 text-center md:text-left">
-          <h1 className="text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-emerald-400 to-emerald-200">
-            Comm-OS
-          </h1>
-          <p className="text-muted-foreground text-lg font-light tracking-wide">
-            Strategic Communication Transition Tracker
-          </p>
+
+        {/* Header */}
+        <div className="flex items-end justify-between gap-4">
+          <div className="space-y-1.5">
+            <h1 className="text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-linear-to-r from-blue-400 via-cyan-400 to-emerald-300">
+              Comm-OS
+            </h1>
+            <p className="text-slate-400 text-base font-light tracking-wide">
+              Strategic Communication Transition Tracker
+            </p>
+          </div>
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-3.5 py-2 rounded-xl transition-all shrink-0"
+          >
+            <BarChart2 className="w-3.5 h-3.5" />
+            Dashboard
+          </Link>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-3 bg-white/5 border border-white/10 rounded-xl p-1 backdrop-blur-md h-12">
-            <TabsTrigger value="preflight" className="rounded-lg data-[state=active]:bg-blue-500/20 data-[state=active]:text-blue-100 transition-all font-medium">Pre-Flight</TabsTrigger>
-            <TabsTrigger value="live" className="rounded-lg data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-100 transition-all font-medium">Live Coach</TabsTrigger>
-            <TabsTrigger value="analytics" className="rounded-lg data-[state=active]:bg-emerald-500/20 data-[state=active]:text-emerald-100 transition-all font-medium">Analytics</TabsTrigger>
+            <TabsTrigger
+              value="preflight"
+              className="rounded-lg data-[state=active]:bg-blue-500/20 data-[state=active]:text-blue-100 text-slate-400 transition-all font-medium text-sm"
+            >
+              Pre-Flight
+            </TabsTrigger>
+            <TabsTrigger
+              value="live"
+              className="rounded-lg data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-100 text-slate-400 transition-all font-medium text-sm"
+            >
+              Live Coach
+            </TabsTrigger>
+            <TabsTrigger
+              value="analytics"
+              className="rounded-lg data-[state=active]:bg-emerald-500/20 data-[state=active]:text-emerald-100 text-slate-400 transition-all font-medium text-sm"
+            >
+              Analytics
+            </TabsTrigger>
           </TabsList>
-          
-          <TabsContent value="preflight" className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <Card className="bg-white/5 border-white/10 backdrop-blur-2xl shadow-2xl">
-              <CardHeader>
-                <CardTitle className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  <RefreshCw className="w-6 h-6 text-blue-400" />
+
+          {/* ── Pre-Flight ─────────────────────────────────────── */}
+          <TabsContent value="preflight" className="mt-6 animate-in fade-in slide-in-from-bottom-3 duration-300">
+            <Card className="bg-white/4 border-white/10 backdrop-blur-2xl shadow-2xl">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl font-bold tracking-tight text-white flex items-center gap-2.5">
+                  <RefreshCw className="w-5 h-5 text-blue-400" />
                   Morning Pre-Flight
                 </CardTitle>
-                <CardDescription className="text-slate-400 text-base">Warm up your executive communication muscle.</CardDescription>
+                <CardDescription className="text-slate-400">
+                  Warm up your executive communication muscle before going live.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-8">
-                <div className="bg-blue-500/10 border border-blue-500/30 p-5 rounded-xl shadow-inner">
-                  <h3 className="font-semibold text-blue-300 mb-2 flex items-center gap-2">
-                    🎯 Focus of the Week
-                  </h3>
-                  <p className="text-blue-100/80 leading-relaxed text-sm md:text-base">
-                    Days 1-10: Awareness & The Pause. Don't worry about perfect structure yet. Your only metric of success is forcing a 3-second pause before speaking.
+              <CardContent className="space-y-6">
+                <div className="bg-blue-500/8 border border-blue-500/20 p-5 rounded-xl">
+                  <p className="text-xs font-semibold text-blue-400 uppercase tracking-widest mb-2">Focus of the Week</p>
+                  <p className="text-blue-100/80 leading-relaxed text-sm">
+                    Days 1–10: Awareness &amp; The Pause. Don&apos;t worry about perfect structure yet.
+                    Your only metric of success is forcing a 3-second pause before speaking.
                   </p>
                 </div>
-                
-                <div className="space-y-6">
-                  <Button onClick={generatePreFlightScenario} className="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20 transition-all rounded-lg font-medium">
+
+                <div className="space-y-5">
+                  <Button
+                    onClick={generatePreFlightScenario}
+                    className="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/30 transition-all rounded-xl font-semibold"
+                  >
                     <BrainCircuit className="w-4 h-4 mr-2" />
-                    Generate Random Scenario
+                    Generate Scenario
                   </Button>
-                  
-                  {randomScenario && (
-                    <div className="p-8 bg-white/5 rounded-2xl border border-white/10 shadow-xl animate-in fade-in slide-in-from-bottom-4 relative overflow-hidden group">
-                      <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-blue-400 to-purple-500"></div>
-                      <p className="text-xl md:text-2xl font-medium text-white mb-6 leading-tight">
-                        "{randomScenario}"
+
+                  {activeScenario && (
+                    <div className="p-7 bg-white/3 rounded-2xl border border-white/10 shadow-xl animate-in fade-in slide-in-from-bottom-3 duration-300 relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-0.5 h-full bg-linear-to-b from-blue-400 to-purple-500 rounded-full" />
+                      <p className="text-xl font-semibold text-white mb-5 leading-snug pl-1">
+                        &ldquo;{activeScenario}&rdquo;
                       </p>
-                      <div className="flex items-center space-x-3 text-sm text-blue-200/70 bg-blue-950/30 w-max px-4 py-2 rounded-full border border-blue-900/50">
-                        <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
-                        <span className="font-medium tracking-wide uppercase text-xs">Practice out loud. Pause for 3 seconds. Deliver the BLUF.</span>
+                      <div className="flex items-center gap-2.5 text-blue-200/60 bg-blue-950/40 w-max px-4 py-2 rounded-full border border-blue-900/40">
+                        <span className="flex h-2 w-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_6px_rgba(239,68,68,0.7)]" />
+                        <span className="font-medium tracking-wide uppercase text-[11px]">
+                          Pause 3 sec · Deliver the BLUF
+                        </span>
                       </div>
                     </div>
                   )}
@@ -119,111 +185,188 @@ export default function CommOSDashboard() {
               </CardContent>
             </Card>
           </TabsContent>
-          
-          <TabsContent value="live" className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <Card className="bg-white/5 border-white/10 backdrop-blur-2xl shadow-2xl">
-              <CardHeader>
-                <CardTitle className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  <RadioReceiver className="w-6 h-6 text-purple-400" />
+
+          {/* ── Live Coach ─────────────────────────────────────── */}
+          <TabsContent value="live" className="mt-6 animate-in fade-in slide-in-from-bottom-3 duration-300">
+            <Card className="bg-white/4 border-white/10 backdrop-blur-2xl shadow-2xl">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl font-bold tracking-tight text-white flex items-center gap-2.5">
+                  <RadioReceiver className="w-5 h-5 text-purple-400" />
                   Live Acoustic Coaching
                 </CardTitle>
-                <CardDescription className="text-slate-400 text-base">Speak naturally. The coach will analyze your tone, hesitations, and structure in real-time.</CardDescription>
+                <CardDescription className="text-slate-400">
+                  Speak naturally. The coach analyzes your tone, hesitations, and structure in real-time.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-8">
-                
-                <div className="flex justify-center py-6">
+              <CardContent className="space-y-6">
+
+                {/* Error banner */}
+                {errorMsg && (
+                  <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 text-red-400 text-sm px-4 py-3 rounded-xl animate-in fade-in duration-200">
+                    <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span className="flex-1">{errorMsg}</span>
+                    <button onClick={clearError} className="shrink-0 hover:text-red-300 transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Connect / Disconnect */}
+                <div className="flex justify-center py-4">
                   {!isConnected ? (
-                    <div className="flex flex-col items-center gap-4">
-                      <Button 
-                        onClick={connect} 
-                        disabled={isConnecting}
-                        className="h-16 px-8 text-lg font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-lg shadow-purple-900/40 rounded-full transition-all hover:scale-105"
-                      >
-                        {isConnecting ? (
-                          <span className="flex items-center gap-2"><RefreshCw className="w-5 h-5 animate-spin" /> Connecting to Gemini Live WSS...</span>
-                        ) : (
-                          <span className="flex items-center gap-2"><Mic className="w-6 h-6" /> Start Live Audio Session</span>
-                        )}
-                      </Button>
-                      {errorMsg && (
-                        <div className="text-red-400 text-sm font-medium bg-red-500/10 px-4 py-2 rounded-lg border border-red-500/20">
-                          {errorMsg}
-                        </div>
+                    <Button
+                      onClick={connect}
+                      disabled={isConnecting}
+                      className="h-14 px-10 text-base font-bold bg-linear-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-lg shadow-purple-900/30 rounded-full transition-all hover:scale-[1.03] disabled:opacity-60 disabled:scale-100"
+                    >
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="w-5 h-5 mr-2.5 animate-spin" />
+                          Connecting…
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-5 h-5 mr-2.5" />
+                          Start Live Session
+                        </>
                       )}
-                    </div>
+                    </Button>
                   ) : (
-                    <Button 
+                    <Button
                       onClick={disconnect}
                       variant="destructive"
-                      className="h-16 px-8 text-lg font-bold bg-red-600/80 hover:bg-red-500 shadow-lg shadow-red-900/40 rounded-full transition-all hover:scale-105 animate-pulse"
+                      className="h-14 px-10 text-base font-bold bg-red-600/80 hover:bg-red-500 shadow-lg shadow-red-900/30 rounded-full transition-all hover:scale-[1.03]"
                     >
-                      <PhoneOff className="w-6 h-6 mr-2" /> End Session
+                      <PhoneOff className="w-5 h-5 mr-2.5" />
+                      End Session
                     </Button>
                   )}
                 </div>
 
-                <div className="bg-black/30 border border-white/10 p-6 rounded-2xl min-h-[300px] relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl group-hover:bg-purple-500/20 transition-all pointer-events-none"></div>
-                  <h4 className="text-purple-400 font-semibold tracking-wide uppercase text-xs mb-4 flex items-center gap-2">
-                    <RadioReceiver className="w-4 h-4"/> Live Transcript & Acoustic Critique
-                  </h4>
-                  <div className="text-white/80 whitespace-pre-wrap leading-relaxed text-lg max-h-[300px] overflow-y-auto pr-4 custom-scrollbar font-mono">
-                    {transcript ? transcript : (
+                {/* Transcript pane */}
+                <div className="bg-black/25 border border-white/10 p-6 rounded-2xl min-h-70 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-56 h-56 bg-purple-500/8 rounded-full blur-3xl pointer-events-none" />
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-purple-400 font-semibold tracking-widest uppercase text-[11px] flex items-center gap-2">
+                      <RadioReceiver className="w-3.5 h-3.5" />
+                      Transcript &amp; Critique
+                    </span>
+                    {transcript && (
+                      <span className="text-[11px] text-slate-600">
+                        {transcript.split(/\s+/).filter(Boolean).length} words
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-white/75 whitespace-pre-wrap leading-relaxed text-[15px] max-h-65 overflow-y-auto pr-2 custom-scrollbar font-mono">
+                    {transcript || (
                       <span className="text-slate-600 italic font-sans flex items-center gap-3">
                         {isConnected ? (
                           <>
-                            <span className="flex h-3 w-3 relative">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-3 w-3 bg-purple-500"></span>
+                            <span className="relative flex h-3 w-3 shrink-0">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
+                              <span className="relative inline-flex rounded-full h-3 w-3 bg-purple-500" />
                             </span>
-                            Listening via PCM Web Socket... Start speaking.
+                            Listening… start speaking.
                           </>
-                        ) : "Connect to start the session."}
+                        ) : 'Connect to start the session.'}
                       </span>
                     )}
                   </div>
                 </div>
-
               </CardContent>
-              <CardFooter className="pt-2">
-                <Button onClick={handleSaveSession} className="w-full h-14 bg-white/10 text-white hover:bg-white/20 font-semibold text-lg shadow-xl border border-white/10 transition-all" disabled={!isConnected && !transcript}>Save Session to Neon DB</Button>
+
+              <CardFooter className="pt-2 pb-6 px-6">
+                <Button
+                  onClick={handleSaveSession}
+                  disabled={!transcript.trim() || saveStatus === 'saving'}
+                  className={`w-full h-12 font-semibold text-sm rounded-xl border transition-all ${
+                    saveStatus === 'success'
+                      ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300 cursor-default'
+                      : saveStatus === 'error'
+                      ? 'bg-red-500/20 border-red-500/30 text-red-300 cursor-default'
+                      : 'bg-white/6 hover:bg-white/10 text-white border-white/10 shadow-inner'
+                  }`}
+                >
+                  {saveStatus === 'saving' && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {saveStatus === 'success' && <CheckCircle2 className="w-4 h-4 mr-2" />}
+                  {saveStatus === 'error' && <XCircle className="w-4 h-4 mr-2" />}
+                  {saveStatus === 'idle' && <Save className="w-4 h-4 mr-2" />}
+                  {saveStatus === 'saving' ? 'Saving…'
+                    : saveStatus === 'success' ? 'Saved — redirecting…'
+                    : saveStatus === 'error' ? 'Save failed — try again'
+                    : 'Save Session to Analytics'}
+                </Button>
               </CardFooter>
             </Card>
           </TabsContent>
 
-          <TabsContent value="analytics" className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <Card className="bg-white/5 border-white/10 backdrop-blur-2xl shadow-2xl">
-              <CardHeader>
-                <CardTitle className="text-2xl font-bold tracking-tight text-white">Communication Logs</CardTitle>
-                <CardDescription className="text-slate-400 text-base">Review your past iterations and measure growth.</CardDescription>
+          {/* ── Analytics ──────────────────────────────────────── */}
+          <TabsContent value="analytics" className="mt-6 animate-in fade-in slide-in-from-bottom-3 duration-300">
+            <Card className="bg-white/4 border-white/10 backdrop-blur-2xl shadow-2xl">
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl font-bold tracking-tight text-white">
+                      Communication Logs
+                    </CardTitle>
+                    <CardDescription className="text-slate-400 mt-1">
+                      Review past iterations and measure growth.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    onClick={refreshLogs}
+                    disabled={isLoadingLogs}
+                    variant="ghost"
+                    className="h-8 w-8 p-0 text-slate-500 hover:text-slate-300 hover:bg-white/5 rounded-lg"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isLoadingLogs ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {logs.length === 0 ? (
-                    <div className="text-center py-16 bg-black/20 rounded-xl border border-white/5 border-dashed">
-                      <p className="text-slate-500 text-lg">No logs yet.</p>
-                      <p className="text-slate-600 text-sm mt-1">Complete a debrief to start tracking.</p>
+                <div className="space-y-3">
+                  {isLoadingLogs ? (
+                    // Loading skeleton
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="p-5 border border-white/10 rounded-xl bg-white/2 animate-pulse">
+                        <div className="flex justify-between items-start gap-4 mb-3">
+                          <div className="h-4 bg-white/10 rounded-md w-3/5" />
+                          <div className="h-5 bg-white/10 rounded-full w-20" />
+                        </div>
+                        <div className="flex gap-4">
+                          <div className="h-3.5 bg-white/10 rounded w-14" />
+                          <div className="h-3.5 bg-white/10 rounded w-16" />
+                        </div>
+                      </div>
+                    ))
+                  ) : logs.length === 0 ? (
+                    <div className="text-center py-16 bg-black/15 rounded-2xl border border-white/6 border-dashed">
+                      <p className="text-slate-500 font-medium">No sessions logged yet.</p>
+                      <p className="text-slate-600 text-sm mt-1.5">
+                        Complete a live coaching session and save it to begin tracking.
+                      </p>
                     </div>
                   ) : (
-                    logs.map((log) => (
-                      <div key={log.id} className="p-5 border border-white/10 rounded-xl bg-black/20 flex flex-col space-y-4 hover:bg-black/40 transition-colors">
-                        <div className="flex justify-between items-start gap-4">
-                          <h4 className="font-semibold text-white text-lg leading-tight">{log.scenario}</h4>
-                          <span className="text-xs bg-slate-800 text-slate-300 px-3 py-1.5 rounded-full font-medium shrink-0 shadow-inner">
-                            Pressure: {log.pressureLevel}/5
+                    logs.map(log => (
+                      <div
+                        key={log.id}
+                        className="p-5 border border-white/10 rounded-xl bg-black/15 hover:bg-black/30 transition-colors duration-200 group"
+                      >
+                        <div className="flex justify-between items-start gap-4 mb-3">
+                          <h4 className="font-semibold text-white text-sm leading-snug">{log.scenario}</h4>
+                          <span className="text-[11px] bg-white/8 text-slate-400 px-2.5 py-1 rounded-full font-medium shrink-0 border border-white/10">
+                            Pressure {log.pressureLevel}/5
                           </span>
                         </div>
-                        <div className="flex space-x-6 text-sm">
-                          <span className={`flex items-center gap-1.5 font-medium ${log.blufScore ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {log.blufScore ? <CheckCircle2 className="w-4 h-4"/> : <XCircle className="w-4 h-4"/>} BLUF
-                          </span>
-                          <span className={`flex items-center gap-1.5 font-medium ${log.ruleOf3Score ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {log.ruleOf3Score ? <CheckCircle2 className="w-4 h-4"/> : <XCircle className="w-4 h-4"/>} Rule of 3
-                          </span>
+                        <div className="flex gap-4 text-xs">
+                          <ScoreBadge label="BLUF" pass={log.blufScore} />
+                          <ScoreBadge label="Rule of 3" pass={log.ruleOf3Score} />
                         </div>
                         {log.idealRewrite && (
-                          <div className="mt-4 text-sm bg-blue-950/20 p-4 rounded-lg text-slate-300 border border-blue-900/30">
-                            <strong className="text-blue-300/80 uppercase text-xs tracking-wider block mb-2">Ideal Executive Version</strong>
+                          <div className="mt-4 text-sm bg-blue-950/20 p-4 rounded-xl text-slate-300 border border-blue-900/20">
+                            <strong className="text-blue-400/70 uppercase text-[11px] tracking-widest block mb-2">
+                              Ideal Executive Version
+                            </strong>
                             <span className="whitespace-pre-wrap leading-relaxed">{log.idealRewrite}</span>
                           </div>
                         )}
@@ -237,5 +380,14 @@ export default function CommOSDashboard() {
         </Tabs>
       </div>
     </div>
+  );
+}
+
+function ScoreBadge({ label, pass }: { label: string; pass: boolean }) {
+  return (
+    <span className={`flex items-center gap-1.5 font-medium ${pass ? 'text-emerald-400' : 'text-red-400'}`}>
+      {pass ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+      {label}
+    </span>
   );
 }

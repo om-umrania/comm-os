@@ -1,176 +1,44 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef } from 'react';
+
+type ServerMessage = {
+  serverContent?: {
+    modelTurn?: {
+      parts: Array<{
+        inlineData?: { mimeType: string; data: string };
+        text?: string;
+      }>;
+    };
+  };
+};
+
+type SetupResponse = {
+  apiKey?: string;
+  systemInstruction?: string;
+  error?: string;
+};
 
 export function useLiveAPI() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  
+
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const playbackContextRef = useRef<AudioContext | null>(null);
-  
   const nextPlayTimeRef = useRef<number>(0);
 
-  // Robust base64 encoding to avoid Maximum Call Stack Size Exceeded
-  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
     let binary = '';
     const bytes = new Uint8Array(buffer);
     for (let i = 0; i < bytes.byteLength; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
     return window.btoa(binary);
-  };
-
-  const connect = useCallback(async () => {
-    setIsConnecting(true);
-    setErrorMsg('');
-    try {
-      const res = await fetch('/api/live-setup');
-      const { apiKey, systemInstruction, error } = await res.json();
-      
-      if (error || !apiKey) {
-        throw new Error(error || "No API key returned from setup.");
-      }
-
-      const model = 'models/gemini-2.0-flash-live-001';
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
-      
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = async () => {
-        try {
-          // 1. Send Setup Message
-          ws.send(JSON.stringify({
-            setup: {
-              model,
-              systemInstruction: {
-                parts: [{ text: systemInstruction }]
-              }
-            }
-          }));
-
-          // 2. Start Audio Capture
-          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-          audioContextRef.current = audioCtx;
-          
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          streamRef.current = stream;
-          
-          const source = audioCtx.createMediaStreamSource(stream);
-          const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-          processorRef.current = processor;
-          
-          source.connect(processor);
-          processor.connect(audioCtx.destination);
-
-          processor.onaudioprocess = (e) => {
-            if (ws.readyState !== WebSocket.OPEN) return;
-            const inputData = e.inputBuffer.getChannelData(0);
-            const pcm16 = new Int16Array(inputData.length);
-            for (let i = 0; i < inputData.length; i++) {
-              pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-            }
-            const base64 = arrayBufferToBase64(pcm16.buffer);
-            ws.send(JSON.stringify({
-              clientContent: {
-                turns: [
-                  {
-                    role: "user",
-                    parts: [{ inlineData: { mimeType: "audio/pcm;rate=16000", data: base64 } }]
-                  }
-                ],
-                turnComplete: true
-              }
-            }));
-          };
-          
-          // Wait, Gemini Live API requires `realtimeInput` for streaming audio, NOT clientContent.
-          // Let's rewrite the onaudioprocess to send realtimeInput.
-          processor.onaudioprocess = (e) => {
-            if (ws.readyState !== WebSocket.OPEN) return;
-            const inputData = e.inputBuffer.getChannelData(0);
-            const pcm16 = new Int16Array(inputData.length);
-            for (let i = 0; i < inputData.length; i++) {
-              pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-            }
-            const base64 = arrayBufferToBase64(pcm16.buffer);
-            ws.send(JSON.stringify({
-              realtimeInput: {
-                mediaChunks: [{
-                  mimeType: "audio/pcm;rate=16000",
-                  data: base64
-                }]
-              }
-            }));
-          };
-
-          const pbCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-          playbackContextRef.current = pbCtx;
-          nextPlayTimeRef.current = 0;
-
-          setIsConnected(true);
-          setIsConnecting(false);
-        } catch (mediaErr: any) {
-          setErrorMsg("Mic Error: " + mediaErr.message);
-          setIsConnecting(false);
-          ws.close();
-        }
-      };
-
-      ws.onmessage = (e) => {
-        if (e.data instanceof Blob) {
-          const reader = new FileReader();
-          reader.onload = () => handleMessage(reader.result as string);
-          reader.readAsText(e.data);
-        } else {
-          handleMessage(e.data);
-        }
-      };
-
-      ws.onerror = (e) => {
-        console.error("WebSocket Error:", e);
-        setErrorMsg("WebSocket connection error. Check API key and model name.");
-      };
-
-      ws.onclose = (e) => {
-        console.log("WebSocket Closed:", e.code, e.reason);
-        if (e.code !== 1000) {
-          setErrorMsg(`Disconnected: ${e.reason || e.code}`);
-        }
-        disconnect();
-      };
-      
-    } catch (err: any) {
-      console.error('Failed to connect:', err);
-      setErrorMsg(err.message || 'Failed to connect');
-      setIsConnecting(false);
-    }
-  }, []);
-
-  const handleMessage = (jsonStr: string) => {
-    try {
-      const data = JSON.parse(jsonStr);
-      
-      // Handle Audio playback
-      if (data.serverContent?.modelTurn?.parts) {
-        for (const part of data.serverContent.modelTurn.parts) {
-          if (part.inlineData && part.inlineData.mimeType.startsWith('audio/pcm')) {
-            playAudioData(part.inlineData.data);
-          }
-          if (part.text) {
-            setTranscript(prev => prev + part.text);
-          }
-        }
-      }
-    } catch (e) {
-      console.error("Error parsing message", e);
-    }
   };
 
   const playAudioData = (base64Str: string) => {
@@ -182,8 +50,7 @@ export function useLiveAPI() {
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
-    
-    // Convert 16-bit PCM bytes to Float32
+
     const pcm16 = new Int16Array(bytes.buffer);
     const float32 = new Float32Array(pcm16.length);
     for (let i = 0; i < pcm16.length; i++) {
@@ -197,7 +64,6 @@ export function useLiveAPI() {
     source.buffer = audioBuffer;
     source.connect(pbCtx.destination);
 
-    // Schedule playback seamlessly
     const currentTime = pbCtx.currentTime;
     if (nextPlayTimeRef.current < currentTime) {
       nextPlayTimeRef.current = currentTime;
@@ -206,11 +72,29 @@ export function useLiveAPI() {
     nextPlayTimeRef.current += audioBuffer.duration;
   };
 
-  const disconnect = useCallback(() => {
+  const handleMessage = (jsonStr: string) => {
+    try {
+      const data = JSON.parse(jsonStr) as ServerMessage;
+      if (data.serverContent?.modelTurn?.parts) {
+        for (const part of data.serverContent.modelTurn.parts) {
+          if (part.inlineData?.mimeType.startsWith('audio/pcm')) {
+            playAudioData(part.inlineData.data);
+          }
+          if (part.text) {
+            setTranscript(prev => prev + part.text);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing message', e);
+    }
+  };
+
+  const disconnect = () => {
     setIsConnected(false);
     setIsConnecting(false);
-    
-    if (processorRef.current && audioContextRef.current) {
+
+    if (processorRef.current) {
       processorRef.current.disconnect();
     }
     if (streamRef.current) {
@@ -225,21 +109,119 @@ export function useLiveAPI() {
     if (wsRef.current) {
       wsRef.current.close();
     }
-    
-    // Reset refs
+
     wsRef.current = null;
     audioContextRef.current = null;
     streamRef.current = null;
     processorRef.current = null;
     playbackContextRef.current = null;
-  }, []);
-
-  return {
-    connect,
-    disconnect,
-    isConnected,
-    isConnecting,
-    transcript,
-    errorMsg
   };
+
+  const connect = async () => {
+    setIsConnecting(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/live-setup');
+      const { apiKey, systemInstruction, error } = await res.json() as SetupResponse;
+
+      if (error || !apiKey) {
+        throw new Error(error ?? 'No API key returned from setup.');
+      }
+
+      const model = 'models/gemini-2.0-flash';
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = async () => {
+        try {
+          ws.send(JSON.stringify({
+            setup: {
+              model,
+              systemInstruction: {
+                parts: [{ text: systemInstruction }]
+              }
+            }
+          }));
+
+          const AudioCtx = window.AudioContext ??
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+
+          const audioCtx = new AudioCtx({ sampleRate: 16000 });
+          audioContextRef.current = audioCtx;
+
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          streamRef.current = stream;
+
+          const source = audioCtx.createMediaStreamSource(stream);
+          const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+          processorRef.current = processor;
+
+          source.connect(processor);
+          processor.connect(audioCtx.destination);
+
+          processor.onaudioprocess = (e) => {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            const inputData = e.inputBuffer.getChannelData(0);
+            const pcm16 = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+            }
+            const base64 = arrayBufferToBase64(pcm16.buffer);
+            ws.send(JSON.stringify({
+              realtimeInput: {
+                mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: base64 }]
+              }
+            }));
+          };
+
+          const pbCtx = new AudioCtx({ sampleRate: 24000 });
+          playbackContextRef.current = pbCtx;
+          nextPlayTimeRef.current = 0;
+
+          setIsConnected(true);
+          setIsConnecting(false);
+        } catch (mediaErr: unknown) {
+          const message = mediaErr instanceof Error ? mediaErr.message : 'Unknown microphone error';
+          setErrorMsg('Mic Error: ' + message);
+          setIsConnecting(false);
+          ws.close();
+        }
+      };
+
+      ws.onmessage = (e) => {
+        if (e.data instanceof Blob) {
+          const reader = new FileReader();
+          reader.onload = () => handleMessage(reader.result as string);
+          reader.readAsText(e.data);
+        } else {
+          handleMessage(e.data as string);
+        }
+      };
+
+      ws.onerror = (e) => {
+        console.error('WebSocket Error:', e);
+        setErrorMsg('WebSocket connection error. Check API key and model name.');
+      };
+
+      ws.onclose = (e) => {
+        console.log('WebSocket Closed:', e.code, e.reason);
+        if (e.code !== 1000) {
+          setErrorMsg(`Disconnected: ${e.reason || e.code}`);
+        }
+        disconnect();
+      };
+
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to connect';
+      console.error('Failed to connect:', err);
+      setErrorMsg(message);
+      setIsConnecting(false);
+    }
+  };
+
+  const clearError = () => setErrorMsg('');
+
+  return { connect, disconnect, isConnected, isConnecting, transcript, errorMsg, clearError };
 }

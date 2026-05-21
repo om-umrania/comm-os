@@ -10,37 +10,54 @@ datasource db {
 model Session {
   id            String   @id @default(cuid())
   createdAt     DateTime @default(now())
-  
+  updatedAt     DateTime @updatedAt
+
+  userId        String?
   scenario      String?
-  pressureLevel Int?     // Scale of 1-5
-  
+  pressureLevel Int?
+
+  // Aggregate analytics — computed and stored after each session ends
+  duration      Int?    // session length in seconds
+  blufAccuracy  Float?  // 0.0–1.0, ratio of user turns where BLUF was achieved
+  rule3Accuracy Float?  // 0.0–1.0
+  weekNumber    Int?    // ISO week number for week-over-week aggregation
+
   turns         Turn[]
+
+  @@index([createdAt])
+  @@index([weekNumber])
+  @@index([userId, createdAt])
 }
 
 model Turn {
   id            String   @id @default(cuid())
   createdAt     DateTime @default(now())
-  
+
   sessionId     String
   session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  
-  speaker       String   // "user" or "ai"
+
+  speaker       String   // "user" | "ai"
   transcript    String   @db.Text
-  
-  // Feedback scores for user turns
+  wordCount     Int?     // derived from transcript at write time
+
+  // Populated only for user turns
   blufScore     Boolean?
   ruleOf3Score  Boolean?
   critique      String?  @db.Text
+
+  @@index([sessionId])
 }
 
-// Keeping the old model for backward compatibility / analytics history
+// Legacy flat model — retained for historical analytics
 model CommunicationLog {
   id              String   @id @default(cuid())
   createdAt       DateTime @default(now())
   scenario        String
-  pressureLevel   Int      
+  pressureLevel   Int
   blufScore       Boolean  @default(false)
   ruleOf3Score    Boolean  @default(false)
   frazzleTrigger  String?  @db.Text
-  idealRewrite    String?  @db.Text 
+  idealRewrite    String?  @db.Text
+
+  @@index([createdAt])
 }

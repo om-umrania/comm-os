@@ -8,7 +8,7 @@ export function getSystemPrompt(): string {
     const readMd = (relPath: string) => {
       try {
         return fs.readFileSync(path.join(kbRoot, relPath), 'utf-8');
-      } catch (e) {
+      } catch {
         console.warn(`Could not read ${relPath}`);
         return '';
       }
