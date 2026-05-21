@@ -19,6 +19,9 @@ type SetupResponse = {
   error?: string;
 };
 
+const MODEL = 'models/gemini-3.1-flash-live-preview';
+const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+
 export function useLiveAPI() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -28,7 +31,7 @@ export function useLiveAPI() {
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const playbackContextRef = useRef<AudioContext | null>(null);
   const nextPlayTimeRef = useRef<number>(0);
 
@@ -94,26 +97,16 @@ export function useLiveAPI() {
     setIsConnected(false);
     setIsConnecting(false);
 
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-    }
-    if (playbackContextRef.current) {
-      playbackContextRef.current.close();
-    }
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
+    workletNodeRef.current?.disconnect();
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    audioContextRef.current?.close();
+    playbackContextRef.current?.close();
+    wsRef.current?.close();
 
     wsRef.current = null;
     audioContextRef.current = null;
     streamRef.current = null;
-    processorRef.current = null;
+    workletNodeRef.current = null;
     playbackContextRef.current = null;
   };
 
@@ -128,21 +121,20 @@ export function useLiveAPI() {
         throw new Error(error ?? 'No API key returned from setup.');
       }
 
-      const model = 'models/gemini-2.0-flash-live-001';
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
-
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(`${WS_BASE}?key=${apiKey}`);
       wsRef.current = ws;
 
       ws.onopen = async () => {
         try {
+          // Send config with updated key name, model, and response modalities
           ws.send(JSON.stringify({
-            setup: {
-              model,
+            config: {
+              model: MODEL,
+              responseModalities: ['AUDIO'],
               systemInstruction: {
-                parts: [{ text: systemInstruction }]
-              }
-            }
+                parts: [{ text: systemInstruction }],
+              },
+            },
           }));
 
           const AudioCtx = window.AudioContext ??
@@ -151,30 +143,43 @@ export function useLiveAPI() {
           const audioCtx = new AudioCtx({ sampleRate: 16000 });
           audioContextRef.current = audioCtx;
 
+          // Load AudioWorklet module (replaces deprecated ScriptProcessorNode)
+          await audioCtx.audioWorklet.addModule('/pcm-processor.js');
+
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           streamRef.current = stream;
 
           const source = audioCtx.createMediaStreamSource(stream);
-          const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-          processorRef.current = processor;
+          const workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
+          workletNodeRef.current = workletNode;
 
-          source.connect(processor);
-          processor.connect(audioCtx.destination);
-
-          processor.onaudioprocess = (e) => {
+          workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
             if (ws.readyState !== WebSocket.OPEN) return;
-            const inputData = e.inputBuffer.getChannelData(0);
-            const pcm16 = new Int16Array(inputData.length);
-            for (let i = 0; i < inputData.length; i++) {
-              pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+            const float32 = e.data;
+            const pcm16 = new Int16Array(float32.length);
+            for (let i = 0; i < float32.length; i++) {
+              pcm16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7FFF;
             }
-            const base64 = arrayBufferToBase64(pcm16.buffer);
             ws.send(JSON.stringify({
               realtimeInput: {
-                mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: base64 }]
-              }
+                mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: arrayBufferToBase64(pcm16.buffer) }],
+              },
             }));
           };
+
+          // Silent gain keeps the audio graph active without mic playback
+          const silentGain = audioCtx.createGain();
+          silentGain.gain.value = 0;
+          source.connect(workletNode);
+          workletNode.connect(silentGain);
+          silentGain.connect(audioCtx.destination);
+
+          // Guard: server may have rejected the setup and closed the socket
+          // while getUserMedia / worklet setup was running
+          if (ws.readyState !== WebSocket.OPEN) {
+            disconnect();
+            return;
+          }
 
           const pbCtx = new AudioCtx({ sampleRate: 24000 });
           playbackContextRef.current = pbCtx;
@@ -200,13 +205,11 @@ export function useLiveAPI() {
         }
       };
 
-      ws.onerror = (e) => {
-        console.error('WebSocket Error:', e);
-        setErrorMsg('WebSocket connection error. Check API key and model name.');
+      ws.onerror = () => {
+        setErrorMsg('WebSocket connection error. Check API key and network.');
       };
 
       ws.onclose = (e) => {
-        console.log('WebSocket Closed:', e.code, e.reason);
         if (e.code !== 1000) {
           setErrorMsg(`Disconnected: ${e.reason || e.code}`);
         }
@@ -215,7 +218,6 @@ export function useLiveAPI() {
 
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to connect';
-      console.error('Failed to connect:', err);
       setErrorMsg(message);
       setIsConnecting(false);
     }
