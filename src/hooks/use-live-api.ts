@@ -5,6 +5,7 @@ import { useState, useRef, useCallback } from 'react';
 export function useLiveAPI() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [transcript, setTranscript] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   
   const wsRef = useRef<WebSocket | null>(null);
