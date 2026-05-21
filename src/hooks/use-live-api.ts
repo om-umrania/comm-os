@@ -151,6 +151,9 @@ export function useLiveAPI() {
       setIsConnecting(false);
     }
   }, []);
+
+  const handleMessage = (jsonStr: string) => {
+    try {
       const data = JSON.parse(jsonStr);
       
       // Handle Audio playback
