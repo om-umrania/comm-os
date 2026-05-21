@@ -20,7 +20,7 @@ export default function CommOSDashboard() {
   const [randomScenario, setRandomScenario] = useState('');
   
   // Live Session State
-  const { connect, disconnect, isConnected, isConnecting, transcript } = useLiveAPI();
+  const { connect, disconnect, isConnected, isConnecting, transcript, errorMsg } = useLiveAPI();
 
   const fetchLogs = async () => {
     const res = await fetch('/api/logs');
@@ -133,17 +133,24 @@ export default function CommOSDashboard() {
                 
                 <div className="flex justify-center py-6">
                   {!isConnected ? (
-                    <Button 
-                      onClick={connect} 
-                      disabled={isConnecting}
-                      className="h-16 px-8 text-lg font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-lg shadow-purple-900/40 rounded-full transition-all hover:scale-105"
-                    >
-                      {isConnecting ? (
-                        <span className="flex items-center gap-2"><RefreshCw className="w-5 h-5 animate-spin" /> Connecting to Gemini Live WSS...</span>
-                      ) : (
-                        <span className="flex items-center gap-2"><Mic className="w-6 h-6" /> Start Live Audio Session</span>
+                    <div className="flex flex-col items-center gap-4">
+                      <Button 
+                        onClick={connect} 
+                        disabled={isConnecting}
+                        className="h-16 px-8 text-lg font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-lg shadow-purple-900/40 rounded-full transition-all hover:scale-105"
+                      >
+                        {isConnecting ? (
+                          <span className="flex items-center gap-2"><RefreshCw className="w-5 h-5 animate-spin" /> Connecting to Gemini Live WSS...</span>
+                        ) : (
+                          <span className="flex items-center gap-2"><Mic className="w-6 h-6" /> Start Live Audio Session</span>
+                        )}
+                      </Button>
+                      {errorMsg && (
+                        <div className="text-red-400 text-sm font-medium bg-red-500/10 px-4 py-2 rounded-lg border border-red-500/20">
+                          {errorMsg}
+                        </div>
                       )}
-                    </Button>
+                    </div>
                   ) : (
                     <Button 
                       onClick={disconnect}
